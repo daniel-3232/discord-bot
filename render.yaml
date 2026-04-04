@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: discord-bot
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node bot.js
+    envVars:
+      - key: DISCORD_TOKEN
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
+        value: anthropic/claude-sonnet-4
+      - key: NODE_ENV
+        value: production
