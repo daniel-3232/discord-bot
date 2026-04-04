@@ -1,6 +1,7 @@
 import {
   Client, GatewayIntentBits, Partials, EmbedBuilder,
   ActionRowBuilder, ButtonBuilder, ButtonStyle,
+  StringSelectMenuBuilder,
 } from 'discord.js';
 import { AudioPlayerStatus } from '@discordjs/voice';
 import OpenAI from 'openai';
@@ -21,7 +22,7 @@ const client = new Client({
   partials: [Partials.Channel],
 });
 
-// ====== Express health endpoint for Render ======
+// ====== Express health endpoint ======
 import express from 'express';
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -39,18 +40,18 @@ const openai = new OpenAI({
 });
 
 const BOT_PREFIX = '!';
+const AUTO_DELETE_MS = 10000; // 10s, set to 0 to disable
 const MODEL = process.env.OPENROUTER_MODEL || 'anthropic/claude-sonnet-4';
 const conversations = new Map();
 
 // ====== Ready ======
-client.on('ready', () => {
+client.on('clientReady', () => {
   console.log(`✅ Bot ready as ${client.user.tag}`);
 });
 
 // ====== Voice state: auto-leave when bot is alone ======
 client.on('voiceStateUpdate', (_, newState) => {
   if (newState.channelId === newState.guild.members.me.voice.channelId) {
-    // Someone left, check if bot is alone
     const result = musicBot.onVoiceStateUpdate(null, newState);
     if (result === 'left') {
       console.log(`[Voice] Leaving ${newState.guild.name} — bot is alone`);
@@ -71,33 +72,15 @@ client.on('messageCreate', async (message) => {
   }
 });
 
-// ====== Button interactions ======
+// ====== Button & Select menu interactions ======
 client.on('interactionCreate', async (interaction) => {
-  if (!interaction.isButton()) return;
-  const { customId, guild } = interaction;
-  if (!customId.startsWith('sp_') || !guild) return;
-
-  await interaction.deferReply({ ephemeral: true });
-
-  const action = customId.replace('sp_', '');
-  switch (action) {
-    case 'pause':  musicBot.pause(guild.id); break;
-    case 'resume': musicBot.resume(guild.id); break;
-    case 'skip':   musicBot.skip(guild.id); break;
-    case 'np': {
-      const player = musicBot.getPlayer(guild.id);
-      const current = player.state.status === AudioPlayerStatus.Playing
-        ? player.state.resource?.metadata : null;
-      await interaction.editReply({
-        embeds: [nowPlayingEmbed(current, player.state.status)],
-      });
-      return;
-    }
-    default:
-      await interaction.editReply({ content: '未知操作' });
-      return;
+  if (interaction.isButton()) {
+    await handleButton(interaction);
   }
-  await interaction.editReply({ content: '✅ 操作成功' });
+
+  if (interaction.isStringSelectMenu()) {
+    await handleSelectMenu(interaction);
+  }
 });
 
 // ====== Command handler ======
@@ -105,82 +88,49 @@ async function handleCommand(message) {
   const args = message.content.slice(BOT_PREFIX.length).trim().split(/\s+/);
   const cmd = args.shift().toLowerCase();
 
-  if (cmd === 'clear') {
-    conversations.delete(message.channel.id);
-    await message.reply('🧹 對話記錄已清除');
-    return;
-  }
-
-  if (cmd === 'help') {
-    await message.reply({ content: `
-**🤖 AI 聊天：** 直接 @Bot 或 DM 即可聊天
+  switch (cmd) {
+    case 'help': {
+      await ephemeralReply(message, `**🤖 AI 聊天：** @提及 Bot 或 DM 即可
 
 **🎵 音樂指令（需加入語音頻道）：**
+${BOT_PREFIX}play <歌名/YouTube連結> — 搜尋並播放
+${BOT_PREFIX}search <歌名>          — 搜尋並選擇
 ${BOT_PREFIX}join                   — 加入你的語音頻道
 ${BOT_PREFIX}leave                  — 離開語音頻道
-${BOT_PREFIX}play <歌名/YouTube連結> — 搜尋並播放
 ${BOT_PREFIX}skip                   — 跳至下一首
 ${BOT_PREFIX}pause                  — 暫停播放
 ${BOT_PREFIX}resume                 — 繼續播放
 ${BOT_PREFIX}queue                  — 查看播放佇列
 ${BOT_PREFIX}np                     — 現在播放
 ${BOT_PREFIX}volume <0-100>         — 調整音量
-${BOT_PREFIX}clear_queue            — 清空佇列
-` });
-    return;
-  }
-
-  const musicCmds = ['join', 'leave', 'play', 'skip', 'pause', 'resume', 'queue', 'np', 'volume', 'clear_queue'];
-  if (musicCmds.includes(cmd)) {
-    await handleMusicCommand(message, cmd, args);
-    return;
-  }
-
-  await message.reply(`❓ 未知指令。輸入 ${BOT_PREFIX}help 查看。`);
-}
-
-// ====== Music commands ======
-async function handleMusicCommand(message, cmd, args) {
-  const { guild, member } = message;
-  if (!guild) return;
-
-  const vc = member?.voice?.channel;
-
-  // Auto-join for play/spotify commands
-  const autoJoinCmds = ['play'];
-  if (autoJoinCmds.includes(cmd)) {
-    if (!vc) {
-      await message.reply('❌ 請先加入語音頻道再使用此指令');
-      return;
+${BOT_PREFIX}clear_queue            — 清空播放佇列
+${BOT_PREFIX}remove <編號>            — 從佇列移除
+${BOT_PREFIX}invite                 — 邀請 Bot 到伺服器
+${BOT_PREFIX}clear                  — 清除 AI 對話記錄`);
+      break;
     }
-    if (musicBot.isConnected(guild.id)) {
-      // already connected, continue
-    } else {
-      try {
-        await musicBot.joinChannel(guild, vc);
-      } catch (e) {
-        await message.reply(`加入頻道失敗：${e.message}`);
-        return;
-      }
-    }
-  }
 
-  switch (cmd) {
     case 'join': {
-      if (!vc) { await message.reply('❌ 請先加入語音頻道'); return; }
-      await message.reply('✅ 已加入語音頻道');
+      const vc = message.member?.voice?.channel;
+      if (!vc) { await ephemeralReply(message, '❌ 請先加入語音頻道'); break; }
+      try {
+        await musicBot.joinChannel(message.guild, vc);
+        await ephemeralReply(message, '✅ 已加入語音頻道');
+      } catch (e) {
+        await ephemeralReply(message, `加入頻道失敗：${e.message}`);
+      }
       break;
     }
 
     case 'leave': {
-      await musicBot.disconnect(guild.id);
-      await message.reply('👋 已離開語音頻道');
+      await musicBot.disconnect(message.guild.id);
+      await ephemeralReply(message, '👋 已離開語音頻道');
       break;
     }
 
     case 'play': {
       const query = args.join(' ');
-      if (!query) { await message.reply('❌ 請輸入歌名或 YouTube 連結'); return; }
+      if (!query) { await ephemeralReply(message, '❌ 請輸入歌名或 YouTube 連結'); break; }
 
       await message.channel.sendTyping();
 
@@ -189,115 +139,227 @@ async function handleMusicCommand(message, cmd, args) {
         track = { title: query, artist: 'YouTube', url: query, duration: 0 };
       } else {
         const results = await searchYouTube(query, 1);
-        if (!results.length) { await message.reply('❌ 找不到歌曲'); return; }
+        if (!results.length) { await ephemeralReply(message, '❌ 找不到歌曲'); break; }
         track = results[0];
       }
 
-      if (!track) { await message.reply('❌ 找不到歌曲'); return; }
+      await ensureJoined(message);
 
-      const result = await musicBot.addTrack(guild.id, track);
+      const result = await musicBot.addTrack(message.guild.id, track);
       if (result.playing) {
-        await message.reply({ content: `🎵 開始播放：**${track.title}**`, components: [makePlayerButtons()] });
+        await ephemeralReply(message, { content: `🎵 開始播放：**${track.title}**`, components: [makePlayerButtons()] });
       } else {
-        await message.reply(`已加入佇列 #${result.position}：**${track.title}**`);
+        await ephemeralReply(message, `已加入佇列 #${result.position}：**${track.title}**`);
       }
+      break;
+    }
+
+    case 'search': {
+      const query = args.join(' ');
+      if (!query) { await ephemeralReply(message, '❌ 請輸入歌名'); break; }
+
+      await message.channel.sendTyping();
+      const results = await searchYouTube(query, 6);
+      if (!results.length) { await ephemeralReply(message, '❌ 找不到歌曲'); break; }
+
+      const select = new StringSelectMenuBuilder()
+        .setCustomId('search_select')
+        .setPlaceholder('選擇一首音樂')
+        .addOptions(
+          results.map((r, i) => ({
+            label: r.title.length > 100 ? r.title.slice(0, 97) + '...' : r.title,
+            description: `${r.artist} • ${formatDuration(r.duration)}`,
+            value: `search_${i}`,
+          }))
+        );
+
+      const msg = await message.channel.send({
+        content: `🔍 搜尋 **「${query}」**：`,
+        components: [new ActionRowBuilder().addComponents(select)],
+      });
+      // Store results for select handler
+      message.channel._searchResults = results;
+      message.channel._searchMsgId = msg.id;
       break;
     }
 
     case 'skip': {
-      musicBot.skip(guild.id);
-      const queue = musicBot.getQueue(guild.id);
-      if (queue.length > 0) {
-        await message.reply(`⏭️ 已跳至下一首：**${queue[0].title}**`);
-      } else {
-        await message.reply('⏭️ 已跳過（佇列為空）');
-      }
+      musicBot.skip(message.guild.id);
+      const queue = musicBot.getQueue(message.guild.id);
+      const msg = queue.length > 0
+        ? `⏭️ 已跳至下一首：**${queue[0].title}**`
+        : '⏭️ 已跳過（佇列為空）';
+      await ephemeralReply(message, msg);
       break;
     }
 
     case 'pause': {
-      musicBot.pause(guild.id);
-      await message.reply('⏸️ 已暫停');
+      musicBot.pause(message.guild.id);
+      await ephemeralReply(message, '⏸️ 已暫停');
       break;
     }
 
     case 'resume': {
-      musicBot.resume(guild.id);
-      await message.reply('▶️ 已繼續');
+      musicBot.resume(message.guild.id);
+      await ephemeralReply(message, '▶️ 已繼續');
       break;
     }
 
     case 'np': {
-      const player = musicBot.getPlayer(guild.id);
-      const current = player.state.status === AudioPlayerStatus.Playing
+      const player = musicBot.getPlayer(message.guild.id);
+      const current = player?.state.status === AudioPlayerStatus.Playing
         ? player.state.resource?.metadata : null;
-      await message.reply({ embeds: [nowPlayingEmbed(current, player.state.status)] });
+      await ephemeralReply(message, { embeds: [nowPlayingEmbed(current, player?.state.status)] });
       break;
     }
 
     case 'queue': {
-      const embed = musicBot.getQueueEmbed(guild.id);
-      await message.reply({ embeds: [embed] });
+      const embed = musicBot.getQueueEmbed(message.guild.id);
+      await ephemeralReply(message, { embeds: [embed] });
       break;
     }
 
     case 'volume': {
       const vol = parseInt(args[0]);
-      if (isNaN(vol) || vol < 0 || vol > 100) { await message.reply('❌ 請輸入有效數字 (0-100)'); return; }
-      musicBot.setVolume(guild.id, vol);
-      await message.reply(`🔊 音量設為 ${vol}%`);
+      if (isNaN(vol) || vol < 0 || vol > 100) { await ephemeralReply(message, '❌ 請輸入有效數字 (0-100)'); break; }
+      musicBot.setVolume(message.guild.id, vol);
+      await ephemeralReply(message, `🔊 音量設為 ${vol}%`);
       break;
     }
 
     case 'clear_queue': {
-      musicBot.clearQueue(guild.id);
-      await message.reply('🧹 佇列已清空');
+      musicBot.clearQueue(message.guild.id);
+      await ephemeralReply(message, '🧹 佇列已清空');
       break;
+    }
+
+    case 'remove': {
+      const idx = parseInt(args[0]) - 1;
+      if (isNaN(idx)) { await ephemeralReply(message, '❌ 用法：`!remove <編號>`'); break; }
+      if (!musicBot.isConnected(message.guild.id)) { await ephemeralReply(message, '❌ Bot 不在語音頻道'); break; }
+      const removed = musicBot.removeTrack(message.guild.id, idx);
+      if (removed === false) { await ephemeralReply(message, `❌ 佇列中沒有編號 ${idx + 1}`); break; }
+      await ephemeralReply(message, `🗑️ 已移除：**${removed.title}**`);
+      break;
+    }
+
+    case 'invite': {
+      const clientId = process.env.DISCORD_CLIENT_ID || client.user.id;
+      const inviteUrl = `https://discord.com/api/oauth2/authorize?client_id=${clientId}&permissions=315783301120&scope=bot%20applications.commands`;
+      await message.reply(`🔗 **邀請連結：**\n${inviteUrl}`);
+      break;
+    }
+
+    case 'clear': {
+      conversations.delete(message.channel.id);
+      await ephemeralReply(message, '🧹 對話記錄已清除');
+      break;
+    }
+
+    default: {
+      await ephemeralReply(message, `❓ 未知指令。輸入 ${BOT_PREFIX}help 查看。`);
     }
   }
 }
 
-// ====== AI Chat ======
-async function handleUserMessage(message) {
-  let userMessage = message.content.replace(new RegExp(`<@!?${client.user.id}>`, 'g'), '').trim();
-  if (!userMessage) return;
+async function handleButton(interaction) {
+  const { customId, guild } = interaction;
+  if (!customId.startsWith('sp_')) return;
 
-  const loadingMsg = await message.channel.send('🤔 思考中...');
+  await interaction.deferReply({ ephemeral: true });
+
+  const action = customId.replace('sp_', '');
+  switch (action) {
+    case 'pause':    musicBot.pause(guild.id); break;
+    case 'resume':   musicBot.resume(guild.id); break;
+    case 'skip':     musicBot.skip(guild.id); break;
+    case 'np': {
+      const player = musicBot.getPlayer(guild.id);
+      const current = player?.state.status === AudioPlayerStatus.Playing
+        ? player.state.resource?.metadata : null;
+      await interaction.editReply({ embeds: [nowPlayingEmbed(current, player?.state.status)] });
+      return;
+    }
+    default:
+      return interaction.editReply({ content: '未知操作' });
+  }
+  await interaction.editReply({ content: '✅ 操作成功' });
+}
+
+async function handleSelectMenu(interaction) {
+  if (interaction.customId !== 'search_select') return;
+
+  const { guild, member, values, channel } = interaction;
+  const selectedIdx = parseInt(values[0].replace('search_', ''));
+
+  const results = channel._searchResults;
+  if (!results || !results[selectedIdx]) {
+    return interaction.reply({ ephemeral: true, content: '❌ 搜尋結果已過期' });
+  }
+
+  const track = results[selectedIdx];
+  delete channel._searchResults;
+
+  // Auto-join if needed
+  const vc = member?.voice?.channel;
+  if (vc && !musicBot.isConnected(guild.id)) {
+    try {
+      await musicBot.joinChannel(guild, vc);
+    } catch (e) {
+      return interaction.reply({ ephemeral: true, content: `加入頻道失敗：${e.message}` });
+    }
+  } else if (!vc) {
+    return interaction.reply({ ephemeral: true, content: '❌ 請先加入語音頻道' });
+  }
 
   try {
-    const key = message.channel.id;
-    if (!conversations.has(key)) conversations.set(key, []);
-    const history = conversations.get(key);
-    history.push({ role: 'user', content: userMessage });
-
-    const response = await openai.chat.completions.create({
-      messages: [
-        { role: 'system', content: '你是一個友善的 AI 助手，整合於 Discord。用繁體中文回答。' },
-        ...history,
-      ],
-      max_tokens: 2048,
-      model: MODEL,
-    });
-
-    const assistantMessage = response.choices[0].message.content;
-    history.push({ role: 'assistant', content: assistantMessage });
-    if (history.length > 20) conversations.set(key, history.slice(-20));
-
-    if (loadingMsg.deletable) await loadingMsg.delete().catch(() => {});
-    if (assistantMessage.length > 2000) {
-      for (let i = 0; i < assistantMessage.length; i += 2000) {
-        await message.channel.send(assistantMessage.slice(i, i + 2000));
-      }
+    await interaction.deferUpdate();
+    const result = await musicBot.addTrack(guild.id, track);
+    if (result.playing) {
+      await interaction.followUp({ content: `🎵 開始播放：**${track.title}**`, components: [makePlayerButtons()] });
     } else {
-      await message.channel.send(assistantMessage);
+      await interaction.followUp({ ephemeral: true, content: `已加入佇列 #${result.position}：**${track.title}**` });
     }
   } catch (e) {
-    console.error('AI Error:', e);
-    await loadingMsg.edit('❌ 發生錯誤').catch(() => {});
+    await interaction.followUp({ ephemeral: true, content: `加入失敗：${e.message}` });
   }
 }
 
 // ====== Helpers ======
+
+async function ensureJoined(message) {
+  const { guild, member } = message;
+  const vc = member?.voice?.channel;
+  if (vc && !musicBot.isConnected(guild.id)) {
+    try {
+      await musicBot.joinChannel(guild, vc);
+    } catch (e) {
+      await ephemeralReply(message, `加入頻道失敗：${e.message}`);
+      return false;
+    }
+  } else if (!vc) {
+    await ephemeralReply(message, '❌ 請先加入語音頻道');
+    return false;
+  }
+  return true;
+}
+
+// Reply and auto-delete to simulate ephemeral behaviour
+async function ephemeralReply(message, options) {
+  if (!AUTO_DELETE_MS) return await message.reply(options);
+  const res = await message.reply(options);
+  setTimeout(() => res.delete().catch(() => {}), AUTO_DELETE_MS);
+  return res;
+}
+
+function formatDuration(ms) {
+  if (!ms) return '??:??';
+  const totalSec = Math.floor(ms / 1000);
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
 function isYouTubeUrl(str) {
   return str.includes('youtube.com') || str.includes('youtu.be');
 }

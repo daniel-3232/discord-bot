@@ -100,6 +100,35 @@ class MusicBot {
     return { playing: true, track: item };
   }
 
+  /** Get track metadata (duration) via yt-dlp JSON dump */
+  async getTrackMetadata(url) {
+    try {
+      const proc = spawn(ytDlpPath, [
+        '--no-playlist',
+        '-J',
+        url,
+      ]);
+      let json = '';
+      proc.stdout.on('data', (d) => { json += d.toString(); });
+      return new Promise((resolve) => {
+        proc.on('close', () => {
+          try {
+            const data = JSON.parse(json);
+            resolve({
+              duration: data.duration ? data.duration * 1000 : 0,
+              title: data.title || '',
+              artist: data.channel || data.uploader || '',
+            });
+          } catch {
+            resolve({ duration: 0, title: '', artist: '' });
+          }
+        });
+      });
+    } catch {
+      return { duration: 0, title: '', artist: '' };
+    }
+  }
+
   /** Download audio with yt-dlp to temp webm file */
   downloadAudio(url) {
     const tmpPath = `${tmpdir()}/dmusic-${randomUUID()}.webm`;
@@ -134,6 +163,11 @@ class MusicBot {
 
     try {
       console.log(`[playTrack] Downloading: ${trackInfo.title}`);
+
+      // Get metadata first (duration for lyrics sync)
+      const metadata = await this.getTrackMetadata(trackInfo.url);
+      trackInfo.duration = metadata.duration;
+
       const tmpPath = await this.downloadAudio(trackInfo.url);
       console.log(`[playTrack] Downloaded: ${tmpPath}`);
 
@@ -165,12 +199,26 @@ class MusicBot {
 
       if (resource.volume) resource.volume.setVolume((trackInfo.volume || 50) / 100);
 
+      // Track start time for lyrics sync
       player.play(resource);
+      trackInfo.trackStartedAt = Date.now();
+      trackInfo.totalPausedMs = 0;
+
       console.log(`[playTrack] Playing: ${trackInfo.title}`);
     } catch (e) {
       console.error(`[playTrack ${guildId}] Error:`, e.message);
       tryNext();
     }
+  }
+
+  /** Get the current elapsed position of the playing track (ms), accounting for pauses */
+  getElapsedMs(guildId) {
+    const player = this.players.get(guildId);
+    const meta = player?.state?.resource?.metadata;
+    if (!meta?.trackStartedAt) return 0;
+    const paused = player?.state?.status === AudioPlayerStatus.Paused;
+    const elapsed = Date.now() - meta.trackStartedAt - (meta.totalPausedMs || 0);
+    return paused ? elapsed : Math.min(elapsed, meta.duration || Infinity);
   }
 
   async cleanup(resource) {
@@ -211,6 +259,17 @@ class MusicBot {
 
   clearQueue(guildId) { this.queues.set(guildId, []); }
 
+  /**
+   * Remove a track from the queue by index
+   * Returns the removed track info, or false if not found
+   */
+  removeTrack(guildId, index) {
+    const queue = this.queues.get(guildId);
+    if (!queue || index < 0 || index >= queue.length) return false;
+    const removed = queue.splice(index, 1)[0];
+    return removed;
+  }
+
   skip(guildId) {
     const p = this.players.get(guildId);
     if (p) p.stop();
@@ -218,12 +277,27 @@ class MusicBot {
 
   pause(guildId) {
     const p = this.players.get(guildId);
-    if (p?.state?.status === AudioPlayerStatus.Playing) p.pause();
+    if (p?.state?.status === AudioPlayerStatus.Playing) {
+      // Record pause start time for sync accuracy
+      const meta = p.state.resource?.metadata;
+      if (meta) {
+        meta.pauseStartedAt = Date.now();
+      }
+      p.pause();
+    }
   }
 
   resume(guildId) {
     const p = this.players.get(guildId);
-    if (p) p.unpause();
+    if (p?.state?.status === AudioPlayerStatus.Paused) {
+      // Accumulate paused time
+      const meta = p.state.resource?.metadata;
+      if (meta?.pauseStartedAt) {
+        meta.totalPausedMs = (meta.totalPausedMs || 0) + (Date.now() - meta.pauseStartedAt);
+        delete meta.pauseStartedAt;
+      }
+      p.unpause();
+    }
   }
 
   setVolume(guildId, percent) {
