@@ -72,6 +72,29 @@ client.on('messageCreate', async (message) => {
   }
 });
 
+// ====== AI Chat handler ======
+async function handleUserMessage(message) {
+  if (!conversations.has(message.channel.id)) {
+    conversations.set(message.channel.id, []);
+  }
+  const chat = conversations.get(message.channel.id);
+  chat.push({ role: 'user', content: message.content });
+
+  try {
+    await message.channel.sendTyping();
+    const response = await openai.chat.completions.create({
+      model: MODEL,
+      messages: chat.slice(-20), // Keep last 20 messages as context
+    });
+    const reply = response.choices[0]?.message?.content || '(no response)';
+    chat.push({ role: 'assistant', content: reply });
+    await message.reply(reply);
+  } catch (err) {
+    console.error('[AI Error]', err);
+    await message.reply('❌ AI 回覆出錯');
+  }
+}
+
 // ====== Button & Select menu interactions ======
 client.on('interactionCreate', async (interaction) => {
   if (interaction.isButton()) {
