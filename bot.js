@@ -20,7 +20,7 @@ const client = new Client({
     GatewayIntentBits.GuildVoiceStates,
     GatewayIntentBits.DirectMessages,
   ],
-  partials: [Partials.Channel, Partials.Message],
+  partials: [Partials.Channel],
 });
 
 // ====== Express health endpoint ======
