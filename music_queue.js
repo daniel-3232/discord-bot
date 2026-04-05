@@ -16,9 +16,8 @@ import { tmpdir } from 'os';
 import { randomUUID } from 'crypto';
 import { unlink } from 'fs/promises';
 
-// yt-dlp path (forward slashes for spawn compatibility)
-const ytDlpPath = process.env.YTDLP_PATH
-  || 'C:/Users/harry/AppData/Local/Packages/PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0/LocalCache/local-packages/Python313/Scripts/yt-dlp.exe';
+// yt-dlp path (env override or from PATH)
+const ytDlpPath = process.env.YTDLP_PATH || 'yt-dlp';
 
 // Fix backslash paths from ffmpeg-static for Windows
 const ffmpegExe = ffmpegPath.split('\\').join('/');
