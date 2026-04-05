@@ -6,6 +6,7 @@ import {
 import { AudioPlayerStatus } from '@discordjs/voice';
 import OpenAI from 'openai';
 import { musicBot, searchTracks as searchYouTube } from './music_queue.js';
+import { loadAllConversations, appendMessage, deleteConversation } from './db.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -42,11 +43,38 @@ const openai = new OpenAI({
 const BOT_PREFIX = '!';
 const AUTO_DELETE_MS = 10000; // 10s, set to 0 to disable
 const MODEL = process.env.OPENROUTER_MODEL || 'anthropic/claude-sonnet-4';
-const conversations = new Map();
+const conversations = loadAllConversations();
 
 // ====== Ready ======
 client.on('clientReady', () => {
   console.log(`✅ Bot ready as ${client.user.tag}`);
+});
+
+// ====== Connection resilience ======
+client.on('error', (err) => {
+  console.error('[Discord Error]', err);
+});
+
+client.on('disconnect', () => {
+  console.warn('[Discord] Disconnected — attempting reconnect...');
+});
+
+client.on('reconnecting', () => {
+  console.log('[Discord] Reconnecting...');
+});
+
+client.on('warn', (info) => {
+  console.warn('[Discord Warn]', info);
+});
+
+process.on('unhandledRejection', (err) => {
+  console.error('[Unhandled Rejection]', err);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[Uncaught Exception]', err);
+  // Exit so Docker restart-policy brings us back
+  process.exit(1);
 });
 
 // ====== Voice state: auto-leave when bot is alone ======
@@ -79,6 +107,7 @@ async function handleUserMessage(message) {
   }
   const chat = conversations.get(message.channel.id);
   chat.push({ role: 'user', content: message.content });
+  appendMessage(message.channel.id, 'user', message.content);
 
   try {
     await message.channel.sendTyping();
@@ -88,6 +117,7 @@ async function handleUserMessage(message) {
     });
     const reply = response.choices[0]?.message?.content || '(no response)';
     chat.push({ role: 'assistant', content: reply });
+    appendMessage(message.channel.id, 'assistant', reply);
     await message.reply(reply);
   } catch (err) {
     console.error('[AI Error]', err);
@@ -125,7 +155,6 @@ ${BOT_PREFIX}pause                  — 暫停播放
 ${BOT_PREFIX}resume                 — 繼續播放
 ${BOT_PREFIX}queue                  — 查看播放佇列
 ${BOT_PREFIX}np                     — 現在播放
-${BOT_PREFIX}volume <0-100>         — 調整音量
 ${BOT_PREFIX}clear_queue            — 清空播放佇列
 ${BOT_PREFIX}remove <編號>            — 從佇列移除
 ${BOT_PREFIX}invite                 — 邀請 Bot 到伺服器
@@ -242,14 +271,6 @@ ${BOT_PREFIX}clear                  — 清除 AI 對話記錄`);
       break;
     }
 
-    case 'volume': {
-      const vol = parseInt(args[0]);
-      if (isNaN(vol) || vol < 0 || vol > 100) { await ephemeralReply(message, '❌ 請輸入有效數字 (0-100)'); break; }
-      musicBot.setVolume(message.guild.id, vol);
-      await ephemeralReply(message, `🔊 音量設為 ${vol}%`);
-      break;
-    }
-
     case 'clear_queue': {
       musicBot.clearQueue(message.guild.id);
       await ephemeralReply(message, '🧹 佇列已清空');
@@ -275,6 +296,7 @@ ${BOT_PREFIX}clear                  — 清除 AI 對話記錄`);
 
     case 'clear': {
       conversations.delete(message.channel.id);
+      deleteConversation(message.channel.id);
       await ephemeralReply(message, '🧹 對話記錄已清除');
       break;
     }

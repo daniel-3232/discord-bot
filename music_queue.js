@@ -19,8 +19,8 @@ import { unlink } from 'fs/promises';
 // yt-dlp path (env override or from PATH)
 const ytDlpPath = process.env.YTDLP_PATH || 'yt-dlp';
 
-// Fix backslash paths from ffmpeg-static for Windows
-const ffmpegExe = ffmpegPath.split('\\').join('/');
+// Use ffmpeg from PATH (not static binary)
+const ffmpegExe = 'ffmpeg';
 
 class MusicBot {
   constructor() {
@@ -64,6 +64,9 @@ class MusicBot {
       channelId: channel.id,
       guildId: guild.id,
       adapterCreator: guild.voiceAdapterCreator,
+      network: process.env.DISCORD_VOICE_EXTERNAL_IP
+        ? { externalIp: process.env.DISCORD_VOICE_EXTERNAL_IP }
+        : undefined,
     });
     this.connections.set(guild.id, connection);
 

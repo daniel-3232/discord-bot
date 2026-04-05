@@ -9,6 +9,9 @@ RUN npm install
 
 COPY . .
 
+VOLUME ["/app/data"]
+ENV DB_PATH=/app/data/bot_memory.db
+
 EXPOSE 3000
 
 CMD ["node", "bot.js"]
