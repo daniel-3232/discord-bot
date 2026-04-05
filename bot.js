@@ -1,7 +1,7 @@
 import {
   Client, GatewayIntentBits, Partials, EmbedBuilder,
   ActionRowBuilder, ButtonBuilder, ButtonStyle,
-  StringSelectMenuBuilder,
+  StringSelectMenuBuilder, ChannelType,
 } from 'discord.js';
 import { AudioPlayerStatus } from '@discordjs/voice';
 import OpenAI from 'openai';
@@ -95,7 +95,7 @@ client.on('messageCreate', async (message) => {
     await handleCommand(message);
     return;
   }
-  if (message.channel.type === 'dm' || message.mentions.has(client.user) || message.reference) {
+  if (message.channel.type === ChannelType.DM || message.channel.type === ChannelType.PrivateThread || message.mentions.has(client.user) || message.reference) {
     await handleUserMessage(message);
   }
 });
