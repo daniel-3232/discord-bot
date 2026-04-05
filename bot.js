@@ -95,7 +95,14 @@ client.on('messageCreate', async (message) => {
     await handleCommand(message);
     return;
   }
-  if (message.channel.type === ChannelType.DM || message.channel.type === ChannelType.PrivateThread || message.mentions.has(client.user) || message.reference) {
+
+  const isDM = !message.guildId;
+  const isMention = message.mentions.has(client.user);
+  const isReply = message.reference && message.referencedMessage?.author?.id === client.user?.id;
+
+  console.log('[Message]', { author: message.author.tag, guild: message.guildId, isDM, isMention, isReply, content: message.content.slice(0, 50) });
+
+  if (isDM || isMention || isReply) {
     await handleUserMessage(message);
   }
 });
