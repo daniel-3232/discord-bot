@@ -16,16 +16,6 @@ db.exec(`
     content TEXT NOT NULL,
     sort_order INTEGER DEFAULT 0
   );
-
-  CREATE TABLE IF NOT EXISTS endfield_profiles (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    cred TEXT NOT NULL,
-    sk_game_role TEXT NOT NULL,
-    platform TEXT NOT NULL,
-    v_name TEXT NOT NULL,
-    account_name TEXT NOT NULL UNIQUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-  );
 `);
 
 /**
@@ -102,28 +92,6 @@ export function trimConversation(channelId, keep) {
         LIMIT ?
       )
   `).run(channelId, channelId, keep);
-}
-
-/**
- * Endfield Profiles Management
- */
-export function addEndfieldProfile(cred, skGameRole, platform, vName, accountName) {
-  const stmt = db.prepare(`
-    INSERT OR REPLACE INTO endfield_profiles
-    (cred, sk_game_role, platform, v_name, account_name)
-    VALUES (?, ?, ?, ?, ?)
-  `);
-  return stmt.run(cred, skGameRole, platform, vName, accountName);
-}
-
-export function getEndfieldProfiles() {
-  const stmt = db.prepare('SELECT * FROM endfield_profiles');
-  return stmt.all();
-}
-
-export function removeEndfieldProfile(accountName) {
-  const stmt = db.prepare('DELETE FROM endfield_profiles WHERE account_name = ?');
-  return stmt.run(accountName);
 }
 
 export default db;
