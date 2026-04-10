@@ -17,6 +17,7 @@ Discord 聊天 + 音樂機器人，透過 OpenRouter 整合 Claude API。
 | `OPENROUTER_API_KEY` | Yes | OpenRouter API Key |
 | `OPENROUTER_MODEL` | No | 預設 `anthropic/claude-sonnet-4` |
 | `DB_PATH` | No | SQLite 路徑，預設 `./bot_memory.db` |
+| `PORT` | No | 健康檢查端口，預設 `3000` |
 
 ## 部署
 
@@ -74,9 +75,9 @@ gcloud compute instances update-container discord-bot \
 | `!resume` | 繼續播放 |
 | `!queue` | 查看播放佇列 |
 | `!np` | 現在播放 |
-| `!volume <0-100>` | 調整音量 |
 | `!clear_queue` | 清空播放佇列 |
 | `!remove <編號>` | 從佇列移除 |
+| `!invite` | 邀請 Bot 到伺服器 |
 | `!clear` | 清除 AI 對話記錄 |
 
 ## 注意事項
