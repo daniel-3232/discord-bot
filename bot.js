@@ -8,6 +8,8 @@ import OpenAI from 'openai';
 import { musicBot, searchTracks as searchYouTube } from './music_queue.js';
 import { loadAllConversations, appendMessage, deleteConversation } from './db.js';
 import dotenv from 'dotenv';
+import { addEndfieldProfile, removeEndfieldProfile } from './db.js';
+import './checkin_scheduler.js';
 
 dotenv.config();
 
@@ -278,14 +280,36 @@ ${BOT_PREFIX}clear                  — 清除 AI 對話記錄`);
     }
 
     case 'remove': {
-      const idx = parseInt(args[0]) - 1;
-      if (isNaN(idx)) { await ephemeralReply(message, '❌ 用法：`!remove <編號>`'); break; }
-      if (!musicBot.isConnected(message.guild.id)) { await ephemeralReply(message, '❌ Bot 不在語音頻道'); break; }
-      const removed = musicBot.removeTrack(message.guild.id, idx);
-      if (removed === false) { await ephemeralReply(message, `❌ 佇列中沒有編號 ${idx + 1}`); break; }
-      await ephemeralReply(message, `🗑️ 已移除：**${removed.title}**`);
-      break;
-    }
+          // usage: !remove <accountName>
+          if (args.length < 1) {
+            await ephemeralReply(message, '❌ 用法: !remove <accountName>');
+            break;
+          }
+          const [accountName] = args;
+          try {
+            removeEndfieldProfile(accountName);
+            await ephemeralReply(message, `✅ 已移除 Endfield 帐号 **${accountName}**`);
+          } catch (e) {
+            await ephemeralReply(message, `❌ 移除失敗: ${e.message}`);
+          }
+          break;
+        }
+
+    case 'addprofile': {
+          // usage: !addprofile <cred> <skGameRole> <platform> <vName> <accountName>
+          if (args.length < 5) {
+            await ephemeralReply(message, '❌ 用法: !addprofile <cred> <skGameRole> <platform> <vName> <accountName>');
+            break;
+          }
+          const [cred, skGameRole, platform, vName, accountName] = args;
+          try {
+            addEndfieldProfile(cred, skGameRole, platform, vName, accountName);
+            await ephemeralReply(message, `✅ 已新增 Endfield 帐号 **${accountName}**`);
+          } catch (e) {
+            await ephemeralReply(message, `❌ 新增失敗: ${e.message}`);
+          }
+          break;
+        }
 
     case 'invite': {
       const clientId = process.env.DISCORD_CLIENT_ID || client.user.id;
@@ -442,3 +466,4 @@ if (!token) {
   process.exit(1);
 }
 client.login(token);
+export { client };
